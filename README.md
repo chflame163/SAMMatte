@@ -1,3 +1,5 @@
+https://github.com/user-attachments/assets/dd2f0ee2-f409-4668-a293-df2a68384c4f
+
 # SAMMatte
 
 `SAMMatte` 是一个本地运行的 Web 应用，用于基于 SAM 3.1 的视频目标分割与遮罩传播。
