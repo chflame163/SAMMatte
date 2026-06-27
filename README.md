@@ -91,8 +91,7 @@ SAMMatte/
 │  │  ├─ ffmpeg.exe
 │  │  ├─ ffplay.exe
 │  │  └─ ffprobe.exe
-│  ├─ ffmpeg_extract/
-│  └─ ffmpeg-release-essentials.zip
+│  └─ ffmpeg_extract/
 ├─ check_runtime.bat
 ├─ run_SAMMatte.bat
 └─ requirements.txt
