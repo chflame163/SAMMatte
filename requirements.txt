@@ -1,0 +1,26 @@
+# Install torch and torchvision separately so they match your local CUDA / CPU runtime.
+# Example for CUDA 12.8:
+# pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
+
+accelerate
+diffusers
+einops
+ftfy
+huggingface_hub
+imageio
+iopath
+numpy
+opencv-python
+pillow
+psutil
+pycocotools
+PyYAML
+regex
+safetensors
+scipy
+setuptools
+timm
+tokenizers
+tqdm
+transformers==4.57.3
+typing_extensions

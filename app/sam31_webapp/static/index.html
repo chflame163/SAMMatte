@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SAM Matte</title>
+    <link rel="stylesheet" href="/static/styles.css?v=zh-cn-20260630" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <h2>SAM Matte</h2>
+          <p class="hero-copy">
+            使用点选、框选或文字提示生成目标遮罩，传播后可预览彩色叠加视频和遮罩视频。
+          </p>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="editor-column">
+          <div id="dropZone" class="drop-zone">
+            <input id="videoInput" type="file" accept="video/*" hidden />
+
+            <div id="loadingOverlay" class="loading-overlay hidden">
+              <div class="loading-panel">
+                <div class="loading-spinner"></div>
+                <p id="loadingTitle" class="loading-title">准备视频</p>
+                <p id="loadingText" class="loading-text">上传中...</p>
+                <div class="loading-track">
+                  <div id="loadingFill" class="loading-fill"></div>
+                </div>
+                <p id="loadingPercent" class="loading-percent">0%</p>
+              </div>
+            </div>
+
+            <div id="dropZoneInner" class="drop-zone-inner">
+              <p class="drop-kicker">拖入视频</p>
+              <h2>把视频拖到这里</h2>
+              <p>也可以点击下方按钮选择本地文件。上传完成后，编辑器会在这里打开。</p>
+              <button id="pickVideoButton" class="ghost-button">选择视频</button>
+            </div>
+
+            <div id="editorCard" class="editor-card embedded-editor hidden">
+              <div class="editor-topbar">
+                <div class="video-meta">
+                  <strong id="videoName">未加载视频</strong>
+                  <span id="videoMetaText">-</span>
+                </div>
+                <div class="video-meta-right">
+                  <div class="zoom-controls">
+                    <button id="zoomOutButton" class="mini-button" type="button">缩小</button>
+                    <button id="zoomInButton" class="mini-button" type="button">放大</button>
+                    <button id="zoomFitButton" class="mini-button" type="button">适应</button>
+                    <button id="zoomFitWidthButton" class="mini-button" type="button">适应宽度</button>
+                    <button id="zoomFitHeightButton" class="mini-button" type="button">适应高度</button>
+                    <span id="zoomValue" class="zoom-chip">100%</span>
+                  </div>
+                  <button id="replaceVideoButton" class="ghost-button" type="button">更换视频</button>
+                </div>
+              </div>
+
+              <div id="videoWrapper" class="video-wrapper">
+                <div id="videoViewport" class="video-viewport">
+                  <div id="videoStage" class="video-stage">
+                    <video id="sourceVideo" playsinline muted preload="metadata"></video>
+                    <canvas id="overlayCanvas"></canvas>
+                  </div>
+                </div>
+              </div>
+
+              <div class="timeline-bar">
+                <button id="prevFrameButton" class="mini-button" type="button">上一帧</button>
+                <input id="frameSlider" type="range" min="0" max="0" value="0" />
+                <button id="nextFrameButton" class="mini-button" type="button">下一帧</button>
+              </div>
+
+              <div class="timeline-meta">
+                <label>
+                  当前帧
+                  <input id="frameNumberInput" type="number" min="0" value="0" />
+                </label>
+                <span id="frameSummary">0 / 0</span>
+                <span id="modeHint">左键添加当前点类型，右键空白处添加负向点，右键已有点可编辑。</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="control-column">
+          <section class="panel-card">
+            <div class="panel-head">
+              <p class="panel-eyebrow">步骤1</p>
+              <h3>提示模式</h3>
+            </div>
+            <div class="mode-tabs">
+              <button data-mode="points" class="mode-tab active" type="button">点选</button>
+              <button data-mode="bbox" class="mode-tab" type="button">框选</button>
+              <button data-mode="text" class="mode-tab" type="button">文字</button>
+            </div>
+
+            <div id="pointsPanel" class="mode-panel">
+              <div class="pill-row">
+                <button data-point-label="1" class="pill-button active" type="button">正向</button>
+                <button data-point-label="0" class="pill-button" type="button">负向</button>
+              </div>
+              <p class="panel-copy">
+                在选定帧上添加多个点。左键添加正向点，右键空白处添加负向点，右键已有点可编辑。
+              </p>
+              <label class="switch-row">
+                <input id="keyframeModeInput" type="checkbox" />
+                <span class="switch-control" aria-hidden="true"></span>
+                <span>关键帧</span>
+                <span id="keyframeLocalText" class="switch-note">点组帧：0</span>
+              </label>
+              <div class="keyframe-edit-row">
+                <button id="prevKeyframeButton" class="mini-button" type="button">上个关键帧</button>
+                <button id="nextKeyframeButton" class="mini-button" type="button">下个关键帧</button>
+                <button id="deleteKeyframeButton" class="mini-button danger-button" type="button">删除当前</button>
+              </div>
+              <p id="pointsCountText" class="quiet-line">已选择 0 个点</p>
+            </div>
+
+            <div id="bboxPanel" class="mode-panel hidden">
+              <p class="panel-copy">直接在画面上拖拽，创建框选提示。</p>
+              <p id="bboxSummaryText" class="quiet-line">尚未选择框。</p>
+            </div>
+
+            <div id="textPanel" class="mode-panel hidden">
+              <label class="stacked-label">
+                文字提示
+                <textarea
+                  id="textPromptInput"
+                  rows="3"
+                  placeholder="仅英文，例如：hair"
+                ></textarea>
+              </label>
+            </div>
+
+            <div class="action-row">
+              <button id="applyPromptButton" class="primary-button" type="button">当前帧预览</button>
+              <button id="resetSessionButton" class="ghost-button" type="button">重置选择</button>
+            </div>
+          </section>
+
+          <section class="panel-card">
+            <div class="panel-head">
+              <p class="panel-eyebrow">步骤2</p>
+              <h3>传播</h3>
+            </div>
+            <div class="setting-grid compact-grid">
+              <label class="stacked-label">
+                视频码率
+                <input id="previewBitrateInput" type="text" value="10M" />
+              </label>
+              <label class="stacked-label">
+                推理像素上限
+                <input id="samMaxPixelsInput" type="text" value="1920x1080" />
+              </label>
+              <label class="stacked-label">
+                遮罩后处理
+                <select id="maskPostprocessSelect">
+                  <option value="binary">二值遮罩</option>
+                  <option value="videomama" selected>VideoMaMa</option>
+                  <option value="vitmatte">ViTMatte</option>
+                </select>
+              </label>
+              <label id="videomamaMaxResolutionField" class="stacked-label">
+                max_resolution
+                <input
+                  id="videomamaMaxResolutionInput"
+                  type="number"
+                  min="256"
+                  max="2048"
+                  step="1"
+                  value="1024"
+                />
+              </label>
+              <label id="vitmatteDeviceField" class="stacked-label">
+                ViTMatte device
+                <select id="vitmatteDeviceSelect">
+                  <option value="gpu" selected>GPU (faster, uses VRAM)</option>
+                  <option value="cpu">CPU (safer, uses RAM)</option>
+                </select>
+              </label>
+            </div>
+            <div id="vitmatteOptions" class="setting-grid compact-grid hidden">
+              <label class="stacked-label">
+                <span class="slider-label-row">
+                  <span>Trimap 腐蚀</span>
+                  <output id="trimapErodeValue" for="trimapErodeInput">12 px</output>
+                </span>
+                <input id="trimapErodeInput" type="range" min="0" max="256" step="1" value="12" />
+              </label>
+              <label class="stacked-label">
+                <span class="slider-label-row">
+                  <span>Trimap 膨胀</span>
+                  <output id="trimapDilateValue" for="trimapDilateInput">16 px</output>
+                </span>
+                <input id="trimapDilateInput" type="range" min="0" max="256" step="1" value="16" />
+              </label>
+            </div>
+            <p class="panel-copy">
+              从确认帧向前后双向传播，并自动渲染彩色叠加预览和遮罩预览。
+            </p>
+            <button id="propagateButton" class="primary-button wide-button" type="button">开始传播</button>
+          </section>
+
+        </aside>
+      </main>
+
+      <section id="previewSection" class="preview-grid hidden">
+        <article class="preview-card">
+          <div class="preview-head">
+            <div>
+              <p class="preview-kicker">叠加预览</p>
+              <h3>彩色叠加</h3>
+            </div>
+          </div>
+          <video id="overlayPreviewVideo" autoplay loop muted playsinline preload="metadata"></video>
+          <div class="preview-timeline">
+            <div class="preview-timeline-row">
+              <button
+                id="overlayPreviewToggleButton"
+                class="mini-button preview-toggle-button"
+                type="button"
+              >
+                播放
+              </button>
+              <input id="overlayPreviewSlider" type="range" min="0" max="0" value="0" step="1" />
+            </div>
+            <div class="preview-timeline-meta">
+              <span id="overlayPreviewFrameText">0 / 0</span>
+            </div>
+          </div>
+        </article>
+
+        <article id="maskPreviewCard" class="preview-card mask-preview-card">
+          <div class="preview-head">
+            <div>
+              <p class="preview-kicker">遮罩预览</p>
+              <h3>遮罩视频</h3>
+            </div>
+            <span class="preview-tip">右键可按自定义码率导出 H.264。</span>
+          </div>
+          <video id="maskPreviewVideo" autoplay loop muted playsinline preload="metadata"></video>
+          <div class="preview-timeline">
+            <div class="preview-timeline-row">
+              <button
+                id="maskPreviewToggleButton"
+                class="mini-button preview-toggle-button"
+                type="button"
+              >
+                播放
+              </button>
+              <input id="maskPreviewSlider" type="range" min="0" max="0" value="0" step="1" />
+            </div>
+            <div class="preview-timeline-meta">
+              <span id="maskPreviewFrameText">0 / 0</span>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="status-card page-status-card" aria-label="会话状态">
+        <div class="status-main">
+          <span id="statusBadge" class="status-badge idle">空闲</span>
+          <p id="statusText">拖入视频即可开始。</p>
+        </div>
+        <div id="progressShell" class="progress-shell">
+          <div class="progress-track">
+            <div id="progressFill" class="progress-fill"></div>
+          </div>
+          <span id="progressText">0%</span>
+        </div>
+        <dl class="session-grid status-session-grid">
+          <div>
+            <dt>目标数</dt>
+            <dd id="objectCountText">-</dd>
+          </div>
+          <div>
+            <dt>帧率</dt>
+            <dd id="fpsText">-</dd>
+          </div>
+          <div>
+            <dt>分辨率</dt>
+            <dd id="resolutionText">-</dd>
+          </div>
+          <div>
+            <dt>SAM 推理</dt>
+            <dd id="samResolutionText">-</dd>
+          </div>
+          <div>
+            <dt>锚定帧</dt>
+            <dd id="anchorFrameText">-</dd>
+          </div>
+          <div>
+            <dt>关键帧</dt>
+            <dd id="keyframeCountText">-</dd>
+          </div>
+        </dl>
+      </section>
+    </div>
+
+    <div id="maskContextMenu" class="context-menu hidden">
+      <label class="stacked-label">
+        导出码率
+        <input id="exportBitrateInput" type="text" value="8M" />
+      </label>
+      <button id="exportMaskButton" class="primary-button wide-button" type="button">导出 H.264 遮罩视频</button>
+    </div>
+
+    <div id="pointContextMenu" class="context-menu point-context-menu hidden">
+      <button id="togglePointButton" class="context-menu-button" type="button">转换正向/负向</button>
+      <button id="deletePointButton" class="context-menu-button danger-text-button" type="button">删除点</button>
+    </div>
+
+    <script src="/static/app.js?v=zh-cn-20260630"></script>
+  </body>
+</html>
