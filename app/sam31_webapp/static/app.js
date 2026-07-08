@@ -28,6 +28,7 @@ const state = {
   overlayPreviewUrl: null,
   maskPreviewUrl: null,
   maskPostprocessMode: "videomama",
+  maskPostprocessTouched: false,
   videomamaMaxResolution: DEFAULT_VIDEOMAMA_MAX_RESOLUTION,
   vitmatteDevice: "gpu",
   trimapErodePx: DEFAULT_TRIMAP_ERODE_PX,
@@ -557,8 +558,11 @@ function readBoundedInteger(input, fallback) {
   return bounded;
 }
 
-function updateMaskPostprocessUI() {
+function updateMaskPostprocessUI(options = {}) {
   state.maskPostprocessMode = els.maskPostprocessSelect.value;
+  if (options.fromUser) {
+    state.maskPostprocessTouched = true;
+  }
   toggleHidden(
     els.videomamaMaxResolutionField,
     state.maskPostprocessMode !== "videomama",
@@ -597,6 +601,7 @@ function syncTrimapControls() {
 }
 
 function getMaskPostprocessPayload() {
+  updateMaskPostprocessUI();
   state.vitmatteDevice = els.vitmatteDeviceSelect?.value || "gpu";
   syncVideomamaMaxResolution();
   syncTrimapControls();
@@ -1052,8 +1057,13 @@ async function applySessionSnapshot(snapshot) {
   state.keyframeFrames = Array.isArray(snapshot.keyframeFrames)
     ? snapshot.keyframeFrames.map((frame) => Number(frame)).filter((frame) => Number.isFinite(frame))
     : [];
-  if (snapshot.maskPostprocess) {
+  const shouldApplyMaskPostprocess =
+    snapshot.maskPostprocess &&
+    (!state.maskPostprocessTouched ||
+      ["propagating", "rendering", "completed", "error"].includes(snapshot.status));
+  if (shouldApplyMaskPostprocess) {
     state.maskPostprocessMode = snapshot.maskPostprocess.mode || "videomama";
+    state.maskPostprocessTouched = false;
     state.videomamaMaxResolution =
       snapshot.maskPostprocess.videomamaMaxResolution ?? DEFAULT_VIDEOMAMA_MAX_RESOLUTION;
     state.vitmatteDevice = snapshot.maskPostprocess.vitmatteDevice || "gpu";
@@ -1218,13 +1228,14 @@ async function startPropagation() {
     throw new Error("传播前请先确认当前帧遮罩。");
   }
   const useKeyframes = state.keyframeMode;
+  const maskPostprocess = getMaskPostprocessPayload();
   const response = await fetch("/api/start_propagation", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({
       sessionId: state.sessionId,
       previewBitrate: els.previewBitrateInput.value,
-      maskPostprocess: getMaskPostprocessPayload(),
+      maskPostprocess,
       keyframeEnabled: useKeyframes,
     }),
   });
@@ -1232,6 +1243,7 @@ async function startPropagation() {
   if (!response.ok) {
     throw new Error(payload.error || "传播启动失败。");
   }
+  state.maskPostprocessTouched = false;
   await applySessionSnapshot(payload);
   setStatus(
     "propagating",
@@ -1419,7 +1431,9 @@ els.nextKeyframeButton.addEventListener("click", () => {
 els.deleteKeyframeButton.addEventListener("click", () => {
   deleteCurrentKeyframe().catch((error) => setStatus("error", error.message));
 });
-els.maskPostprocessSelect.addEventListener("change", updateMaskPostprocessUI);
+els.maskPostprocessSelect.addEventListener("change", () =>
+  updateMaskPostprocessUI({fromUser: true}),
+);
 els.videomamaMaxResolutionInput.addEventListener("change", syncVideomamaMaxResolution);
 els.trimapErodeInput.addEventListener("input", syncTrimapControls);
 els.trimapDilateInput.addEventListener("input", syncTrimapControls);
