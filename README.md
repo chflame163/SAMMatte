@@ -8,7 +8,7 @@ https://github.com/user-attachments/assets/dd2f0ee2-f409-4668-a293-df2a68384c4f
 
 ## 1. 环境要求
 
-- Windows 10 或 Windows 11
+- Windows 10 或 Windows 11（Linux 部署请看 `README_LINUX.md`）
 - NVIDIA GPU
 - 正常可用的 CUDA 驱动
 - Python 3.12，已按 `requirements.txt` 配置好的外置 Python 环境
@@ -22,6 +22,36 @@ https://github.com/user-attachments/assets/dd2f0ee2-f409-4668-a293-df2a68384c4f
 
 
 ## 2. 配置 Python 环境
+
+### 方式 A：一键脚本（推荐）
+
+在项目目录下双击或运行：
+
+```powershell
+setup_windows.bat
+```
+
+脚本会在项目内创建 `venv\` 并依次完成：查找可用 Python（3.10+，推荐 3.12）→ 创建 venv →
+引导 pip → 安装 `torch==2.7.1 torchvision==0.22.1`（CUDA 12.8 轮子）→ 安装 `requirements.txt` →
+把 `diffusers / accelerate / timm / ftfy / opencv-python` 对齐到已知可用版本 →
+确认 ffmpeg（缺失时自动下载 gyan.dev 构建到 `tools\ffmpeg\`）→ 运行环境自检。
+
+常用参数（PowerShell 版 `setup_windows.ps1` 支持全部开关）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File setup_windows.ps1 -DryRun          # 只打印将执行的命令
+powershell -ExecutionPolicy Bypass -File setup_windows.ps1 -TorchVariant cu126 -TorchVersion 2.7.1 -TorchvisionVersion 0.22.1
+powershell -ExecutionPolicy Bypass -File setup_windows.ps1 -PythonExe "C:\path\to\python.exe" -SkipTorch
+powershell -ExecutionPolicy Bypass -File setup_windows.ps1 -PipIndex https://mirrors.aliyun.com/pypi/simple/
+```
+
+开关：`-SkipTorch`（已有 torch）、`-SkipDeps`（不装 requirements）、`-SkipFfmpeg`（不下载 ffmpeg）、
+`-SkipCheck`（跳过自检）、`-DryRun`（预演）。
+
+创建好 `venv\` 之后，`run_SAMMatte.bat` 和 `check_runtime.bat` 会自动优先使用
+`<项目>\venv\Scripts\python.exe`；没有 venv 时才回退到 PATH 中的 `python`。
+
+### 方式 B：手动创建环境
 
 创建本地python环境。以conda为例：
 ```powershell
@@ -185,6 +215,18 @@ $env:SAM31_PORT=8765
 ```text
 http://192.168.1.10:8765
 ```
+
+### 5.1 Linux 服务器
+
+```bash
+cd /path/to/SAMMatte
+bash setup_linux.sh        # 首次搭建：项目内 venv + 依赖 + 静态 ffmpeg
+bash check_runtime.sh      # 环境自检（不会申请显存）
+bash start_sammatte.sh     # 后台启动，默认监听 0.0.0.0:8765
+bash stop_sammatte.sh      # 停止
+```
+
+细节与显存要求见 `README_LINUX.md`。
 
 ## 6. WebApp 使用流程
 

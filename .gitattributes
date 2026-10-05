@@ -1,0 +1,28 @@
+# 行尾约定：Linux/shell 脚本必须是 LF，Windows 脚本必须是 CRLF，
+# 避免 core.autocrlf=true 的机器把 .sh 检出成 CRLF 后在 Linux 上无法执行。
+*.sh          text eol=lf
+*.py          text eol=lf
+*.md          text eol=lf
+*.txt         text eol=lf
+*.json        text eol=lf
+*.bat         text eol=crlf
+*.cmd         text eol=crlf
+*.ps1         text eol=crlf
+
+# 二进制资产
+*.pt          binary
+*.pth         binary
+*.bin         binary
+*.safetensors binary
+*.ckpt        binary
+*.gz          binary
+*.zip         binary
+*.tar         binary
+*.xz          binary
+*.png         binary
+*.jpg         binary
+*.jpeg        binary
+*.gif         binary
+*.mp4         binary
+*.exe         binary
+*.dll         binary

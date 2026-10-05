@@ -627,11 +627,137 @@ def build_mask_rgba(mask_frame: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA)
 
 
+FFMPEG_ENV_VAR = "SAM31_FFMPEG"
+_ffmpeg_path_cache: str | None = None
+_ffmpeg_path_lock = threading.Lock()
+
+
+def _bundled_ffmpeg_candidates() -> list[Path]:
+    tools_root = PROJECT_ROOT / "tools"
+    if os.name == "nt":
+        directories = (tools_root / "ffmpeg", tools_root / "ffmpeg_extract")
+        names = ("ffmpeg.exe",)
+    else:
+        directories = (tools_root / "ffmpeg_linux", tools_root / "ffmpeg")
+        names = ("ffmpeg",)
+    return [directory / name for directory in directories for name in names]
+
+
+def resolve_ffmpeg_path() -> str:
+    """Locate an ffmpeg executable: env override -> bundled -> PATH -> imageio-ffmpeg."""
+    global _ffmpeg_path_cache
+    with _ffmpeg_path_lock:
+        if _ffmpeg_path_cache:
+            return _ffmpeg_path_cache
+
+        env_value = (os.environ.get(FFMPEG_ENV_VAR) or "").strip()
+        if env_value:
+            candidate = Path(os.path.expanduser(env_value))
+            if not candidate.is_file():
+                raise RuntimeError(
+                    f"{FFMPEG_ENV_VAR} 指向的文件不存在：{candidate}"
+                )
+            resolved = str(candidate)
+        else:
+            resolved = None
+            for candidate in _bundled_ffmpeg_candidates():
+                if candidate.is_file() and (os.name == "nt" or os.access(candidate, os.X_OK)):
+                    resolved = str(candidate)
+                    break
+            if resolved is None:
+                resolved = shutil.which("ffmpeg")
+            if resolved is None:
+                try:
+                    import imageio_ffmpeg
+
+                    exe = imageio_ffmpeg.get_ffmpeg_exe()
+                    if exe and Path(exe).is_file():
+                        resolved = str(exe)
+                except Exception:
+                    resolved = None
+            if resolved is None:
+                resolved = "ffmpeg"
+
+        _ffmpeg_path_cache = resolved
+        return resolved
+
+
+def describe_gpu_status() -> list[str]:
+    """Report GPU state without creating a CUDA context (safe while other jobs hold the GPU)."""
+    lines: list[str] = []
+    try:
+        available = torch.cuda.is_available()
+    except Exception as exc:  # pragma: no cover - driver level failures
+        return [f"CUDA 可用性检查失败：{exc}"]
+    if not available:
+        return ["CUDA 不可用：SAM 3.1 / ViTMatte(GPU) / VideoMaMa 都需要 NVIDIA CUDA 环境。"]
+
+    lines.append(
+        f"CUDA -> torch {torch.__version__} (cuda runtime {torch.version.cuda})"
+    )
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,driver_version,memory.total,memory.free",
+                "--format=csv,noheader",
+            ],
+            check=False,
+            capture_output=True,
+            timeout=20,
+        )
+    except Exception:
+        return lines
+    if result.returncode != 0:
+        return lines
+    for row in _decode_subprocess_output(result.stdout).splitlines():
+        row = row.strip()
+        if not row:
+            continue
+        lines.append(f"GPU -> {row}")
+        parts = [part.strip() for part in row.split(",")]
+        try:
+            free_mib = int(parts[-1].split()[0])
+            total_mib = int(parts[-2].split()[0])
+            if free_mib < 8192:
+                lines.append(
+                    f"警告：可用显存仅 {free_mib} MiB / {total_mib} MiB。"
+                    "SAM 3.1 传播通常需要 8 GiB 以上；如显存被其他任务占用，"
+                    "请先停止该任务或调低推理像素上限。"
+                )
+        except (ValueError, IndexError):
+            pass
+    return lines
+
+
+def describe_ffmpeg() -> str:
+    ffmpeg_path = resolve_ffmpeg_path()
+    try:
+        result = subprocess.run(
+            [ffmpeg_path, "-version"],
+            check=False,
+            capture_output=True,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        return (
+            "ffmpeg 未找到（尝试过 SAM31_FFMPEG、tools/ffmpeg*、PATH、imageio-ffmpeg）。"
+            "预览与导出的 H.264 重编码会失败。"
+        )
+    except Exception as exc:
+        return f"ffmpeg 检查失败：{ffmpeg_path} —— {exc}"
+    if result.returncode != 0:
+        return f"ffmpeg 检查失败：{ffmpeg_path}（返回码 {result.returncode}）"
+    first_line = _decode_subprocess_output(result.stdout).splitlines()
+    version = first_line[0] if first_line else "unknown"
+    return f"ffmpeg -> {ffmpeg_path} | {version}"
+
+
 def reencode_h264(
-    input_path: Path, output_path: Path, bitrate: str, ffmpeg_path: str = "ffmpeg"
+    input_path: Path, output_path: Path, bitrate: str, ffmpeg_path: str | None = None
 ) -> None:
     command = [
-        ffmpeg_path,
+        ffmpeg_path or resolve_ffmpeg_path(),
         "-y",
         "-i",
         str(input_path),

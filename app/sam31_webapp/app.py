@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import cgi
 import json
 import mimetypes
+import os
+import platform
+import sys
 import threading
 import time
 import traceback
@@ -15,12 +17,24 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 if __package__ in (None, ""):
-    import sys
-
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from sam31_webapp.service import Sam31WebService, console_error, console_info
+    from sam31_webapp.multipart import MultipartParseError, close_fields, parse_multipart
+    from sam31_webapp.service import (
+        Sam31WebService,
+        console_error,
+        console_info,
+        describe_ffmpeg,
+        describe_gpu_status,
+    )
 else:
-    from .service import Sam31WebService, console_error, console_info
+    from .multipart import MultipartParseError, close_fields, parse_multipart
+    from .service import (
+        Sam31WebService,
+        console_error,
+        console_info,
+        describe_ffmpeg,
+        describe_gpu_status,
+    )
 
 
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
@@ -32,9 +46,18 @@ CLIENT_DISCONNECT_ERRORS = (
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="SAM 3.1 local web app server")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
+    parser = argparse.ArgumentParser(description="SAM 3.1 web app server")
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("SAM31_HOST", "127.0.0.1"),
+        help="绑定地址；0.0.0.0 表示允许局域网访问。默认读取环境变量 SAM31_HOST。",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("SAM31_PORT", "8765")),
+        help="监听端口。默认读取环境变量 SAM31_PORT（默认 8765）。",
+    )
     parser.add_argument(
         "--sam-max-inference-pixels",
         default=None,
@@ -46,6 +69,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="服务启动后自动打开默认浏览器。",
     )
     return parser.parse_args(argv)
+
+
+def has_desktop_session() -> bool:
+    """Best-effort check for a usable desktop session (False on headless servers)."""
+    if os.name == "nt":
+        return True
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
 def open_browser_async(url: str) -> None:
@@ -171,40 +201,40 @@ def make_handler(service: Sam31WebService):
                     HTTPStatus.BAD_REQUEST,
                 )
                 return
-            form = cgi.FieldStorage(
-                fp=self.rfile,
-                headers=self.headers,
-                environ={
-                    "REQUEST_METHOD": "POST",
-                    "CONTENT_TYPE": content_type,
-                    "CONTENT_LENGTH": self.headers.get("Content-Length", "0"),
-                },
-            )
-            if "video" not in form:
-                self._send_json({"error": "缺少 video 字段。"}, HTTPStatus.BAD_REQUEST)
+            content_length = int(self.headers.get("Content-Length", "0"))
+            try:
+                form = parse_multipart(self.rfile, content_type, content_length)
+            except MultipartParseError as exc:
+                self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
-            video_field = form["video"]
-            previous_session_id = (
-                form["previous_session_id"].value
-                if "previous_session_id" in form and form["previous_session_id"].value
-                else None
-            )
-            sam_max_inference_pixels = (
-                form["sam_max_inference_pixels"].value
-                if "sam_max_inference_pixels" in form
-                and form["sam_max_inference_pixels"].value
-                else None
-            )
-            if not getattr(video_field, "file", None):
-                self._send_json({"error": "上传内容中没有文件。"}, HTTPStatus.BAD_REQUEST)
-                return
-            result = service.create_session_from_upload(
-                video_field.file,
-                getattr(video_field, "filename", "uploaded.mp4"),
-                previous_session_id=previous_session_id,
-                sam_max_inference_pixels=sam_max_inference_pixels,
-            )
-            self._send_json(result)
+            try:
+                if "video" not in form:
+                    self._send_json({"error": "缺少 video 字段。"}, HTTPStatus.BAD_REQUEST)
+                    return
+                video_field = form["video"]
+                previous_session_id = (
+                    form["previous_session_id"].value
+                    if "previous_session_id" in form and form["previous_session_id"].value
+                    else None
+                )
+                sam_max_inference_pixels = (
+                    form["sam_max_inference_pixels"].value
+                    if "sam_max_inference_pixels" in form
+                    and form["sam_max_inference_pixels"].value
+                    else None
+                )
+                if not getattr(video_field, "file", None):
+                    self._send_json({"error": "上传内容中没有文件。"}, HTTPStatus.BAD_REQUEST)
+                    return
+                result = service.create_session_from_upload(
+                    video_field.file,
+                    getattr(video_field, "filename", "uploaded.mp4"),
+                    previous_session_id=previous_session_id,
+                    sam_max_inference_pixels=sam_max_inference_pixels,
+                )
+                self._send_json(result)
+            finally:
+                close_fields(form)
 
         def _serve_media(self, relative_path: str) -> None:
             decoded_relative_path = unquote(relative_path)
@@ -336,11 +366,37 @@ def main(argv: list[str] | None = None) -> int:
         default_sam_max_inference_pixels=args.sam_max_inference_pixels
     )
     handler = make_handler(service)
-    server = ThreadingHTTPServer((args.host, args.port), handler)
-    server_url = f"http://{args.host}:{args.port}"
-    console_info(f"SAM 3.1 web app listening on {server_url}")
+    try:
+        server = ThreadingHTTPServer((args.host, args.port), handler)
+    except OSError as exc:
+        console_error(
+            f"无法监听 {args.host}:{args.port} —— {exc}。"
+            "请确认端口未被占用（避免使用 8080 / 8188），或用 SAM31_PORT 换一个端口。"
+        )
+        return 1
+
+    console_info(
+        f"运行环境 -> Python {platform.python_version()} ({platform.system()} "
+        f"{platform.machine()}) | {sys.executable}"
+    )
+    for line in describe_gpu_status():
+        console_info(line)
+    console_info(describe_ffmpeg())
+    if args.host in {"0.0.0.0", "::"}:
+        console_info(f"SAM 3.1 web app listening on http://{args.host}:{args.port}")
+        console_info(
+            "局域网访问请使用本机 IP，例如 http://<服务器IP>:"
+            f"{args.port}"
+        )
+    else:
+        console_info(f"SAM 3.1 web app listening on http://{args.host}:{args.port}")
+
     if args.open_browser:
-        open_browser_async(server_url)
+        if has_desktop_session():
+            open_browser_async(f"http://{args.host}:{args.port}")
+        else:
+            console_info("当前为无桌面环境（headless），跳过自动打开浏览器。")
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:

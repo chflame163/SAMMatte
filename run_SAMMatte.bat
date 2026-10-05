@@ -5,14 +5,29 @@ set "ROOT=%~dp0"
 set "APP=%ROOT%app"
 set "MODELS=%ROOT%models"
 
-where python >nul 2>nul
-if errorlevel 1 (
+set "PY="
+if exist "%ROOT%venv\Scripts\python.exe" set "PY=%ROOT%venv\Scripts\python.exe"
+
+if not defined PY (
+  where python >nul 2>nul
+  if not errorlevel 1 set "PY=python"
+)
+
+if not defined PY (
   echo [ERROR] Python was not found.
-  echo         Make sure the external Python environment is installed and "python" is available in PATH.
+  echo         Run "setup_windows.bat" to create the project venv, or make "python" available in PATH.
   pause
   exit /b 1
 )
-set "PY=python"
+
+"%PY%" -c "import sys" >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] The selected Python could not be executed: "%PY%"
+  echo         If "python" is the Microsoft Store alias, disable app execution aliases
+  echo         in Windows Settings, or run "setup_windows.bat" to create the project venv.
+  pause
+  exit /b 1
+)
 
 if "%SAM31_HOST%"=="" set "SAM31_HOST=127.0.0.1"
 if "%SAM31_PORT%"=="" set "SAM31_PORT=8765"
